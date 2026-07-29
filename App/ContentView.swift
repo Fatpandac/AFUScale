@@ -170,7 +170,7 @@ struct ContentView: View {
                     .foregroundStyle(Palette.muted)
             }
 
-            writeTarget
+            writeSection
         }
         .padding(24)
         .background(Palette.parchment)
@@ -178,7 +178,30 @@ struct ContentView: View {
 
     /// 写入方式：Apple 健康（需授权）或快捷指令兑底（免费签名无 HealthKit 权限时）。
     @ViewBuilder
-    private var writeTarget: some View {
+    private var writeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("写入方式")
+                .font(.system(size: 14, weight: .semibold))
+
+            Picker("写入方式", selection: $scale.writeTarget) {
+                Text("Apple 健康").tag(ScaleController.WriteTarget.health)
+                Text("快捷指令").tag(ScaleController.WriteTarget.shortcut)
+            }
+            .pickerStyle(.segmented)
+            .disabled(scale.healthUnavailable)
+
+            if scale.healthUnavailable {
+                HStack(spacing: 8) {
+                    Text("当前签名不包含 HealthKit 权限，只能用快捷指令写入。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.muted)
+                    Button("重新检测") { scale.retryHealth() }
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.blue)
+                }
+            }
+        }
+
         if scale.usesShortcut {
             VStack(alignment: .leading, spacing: 12) {
                 Text("测量结果交由名为「\(ScaleController.shortcutName)」的快捷指令写入 Apple 健康。")
@@ -201,34 +224,21 @@ struct ContentView: View {
                         .font(.system(size: 14))
                         .foregroundStyle(Palette.muted)
                 }
-
-                Button("改用 Apple 健康写入") { scale.requestHealthAuthorization() }
-                    .font(.system(size: 14))
-                    .foregroundStyle(Palette.blue)
-                    .frame(minHeight: 44)
             }
         } else if scale.needsHealthAuthorization {
-            VStack(spacing: 12) {
-                Button {
-                    scale.requestHealthAuthorization()
-                } label: {
-                    Text("允许写入 Apple 健康")
-                        .font(.system(size: 17))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 44)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(Palette.blue)
-                .clipShape(Capsule())
-                .accessibilityHint("打开 Apple 健康授权请求")
-
-                Button("改用快捷指令写入") { scale.usesShortcut = true }
-                    .font(.system(size: 14))
-                    .foregroundStyle(Palette.blue)
+            Button {
+                scale.requestHealthAuthorization()
+            } label: {
+                Text("允许写入 Apple 健康")
+                    .font(.system(size: 17))
+                    .frame(maxWidth: .infinity)
                     .frame(height: 44)
-                    .accessibilityHint("不请求健康权限，改由快捷指令写入")
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .background(Palette.blue)
+            .clipShape(Capsule())
+            .accessibilityHint("打开 Apple 健康授权请求")
         }
     }
 

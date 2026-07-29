@@ -18,4 +18,12 @@ final class ShortcutURLTests: XCTestCase {
         // 体脂率以百分数传递（两位小数），不是 0.1874，也不是 1874。
         XCTAssertEqual(value("text"), #"{"weight":68.65,"bmi":23.21,"fat":18.74}"#)
     }
+
+    /// 空文本在 Shortcuts 里算「有值」，所以缺阻抗时必须整个键不传。
+    func testOmitsFatKeyWithoutImpedance() throws {
+        let url = try XCTUnwrap(ScaleController.shortcutURL(weight: 68.653, bmi: 23.21, fat: nil))
+        let text = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "text" }?.value)
+        XCTAssertEqual(text, #"{"weight":68.65,"bmi":23.21}"#)
+    }
 }

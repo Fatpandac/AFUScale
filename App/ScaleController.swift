@@ -34,18 +34,24 @@ final class ScaleController: NSObject, ObservableObject {
     }
 
     // ponytail: 快捷指令名写死，用户按这个名字建捷径即可；要改名再加设置项。
-    static let shortcutName = "AFUScale 写入健康"
+    nonisolated static let shortcutName = "AFUScale 写入健康"
     /// 快捷指令跑完通过 x-callback-url 跳回本 App 用的 scheme（同步登记在 Info.plist）。
-    static let callbackScheme = "afuscale"
+    nonisolated static let callbackScheme = "afuscale"
 
     /// 交给「快捷指令」的文本输入为 JSON，捷径里用「从输入获取词典」取值。
-    /// fat 是百分数本身（18.70 即 18.70%），快捷指令里直接填入，不要再乘除 100。
-    static func shortcutURL(name: String = shortcutName, weight: Double, bmi: Double, fat: Double) -> URL? {
+    /// fat 是百分数本身（18.70 即 18.70%），快捷指令里直接填入，不要再乘除 100；
+    /// 秤没测到阻抗时整个 fat 键不传（空文本在 Shortcuts 里算「有值」，会被当成数字去转而报错），
+    /// 捷径里用「如果 词典值 fat 有任何值」包住体脂率那一步。
+    nonisolated static func shortcutURL(name: String = shortcutName, weight: Double, bmi: Double, fat: Double?) -> URL? {
+        var fields = [String(format: "\"weight\":%.2f", weight), String(format: "\"bmi\":%.2f", bmi)]
+        if let fat {
+            fields.append(String(format: "\"fat\":%.2f", fat))
+        }
         var components = URLComponents(string: "shortcuts://x-callback-url/run-shortcut")
         components?.queryItems = [
             URLQueryItem(name: "name", value: name),
             URLQueryItem(name: "input", value: "text"),
-            URLQueryItem(name: "text", value: String(format: "{\"weight\":%.2f,\"bmi\":%.2f,\"fat\":%.2f}", weight, bmi, fat)),
+            URLQueryItem(name: "text", value: "{" + fields.joined(separator: ",") + "}"),
             URLQueryItem(name: "x-success", value: "\(callbackScheme)://saved"),
             URLQueryItem(name: "x-error", value: "\(callbackScheme)://failed"),
             URLQueryItem(name: "x-cancel", value: "\(callbackScheme)://cancelled")
@@ -61,7 +67,7 @@ final class ScaleController: NSObject, ObservableObject {
             // 快捷指令写 Health 的结果读不回来，回跳即视为成功，本地存一份用于展示。
             if let pendingRecord {
                 localRecords.append(pendingRecord)
-                lastSavedText = String(format: "已写入：%.2f kg / BMI %.1f / 体脂 %.1f%%", pendingRecord.weightKg, pendingRecord.bmi, pendingRecord.bodyFatPercent)
+                lastSavedText = Self.summary("已写入", pendingRecord.weightKg, pendingRecord.bmi, pendingRecord.bodyFatPercent)
                 self.pendingRecord = nil
                 loadRecords()
             }
@@ -86,7 +92,13 @@ final class ScaleController: NSObject, ObservableObject {
         let date: Date
         let weightKg: Double
         let bmi: Double
-        let bodyFatPercent: Double
+        let bodyFatPercent: Double?
+    }
+
+    /// 体脂率可能因缺阻抗而缺失，统一在这里拼文案。
+    nonisolated static func summary(_ prefix: String, _ weight: Double, _ bmi: Double, _ fat: Double?) -> String {
+        prefix + String(format: "：%.2f kg / BMI %.1f / 体脂 ", weight, bmi)
+            + (fat.map { String(format: "%.1f%%", $0) } ?? "—")
     }
 
     private static let localRecordsKey = "AFUScale.shortcutRecords"
@@ -177,7 +189,7 @@ final class ScaleController: NSObject, ObservableObject {
         Task {
             let fromHealth = (try? await health.fetchRecords()) ?? []
             let fromShortcut = localRecords.map {
-                SavedRecord(date: $0.date, weightKg: $0.weightKg, bmi: $0.bmi, bodyFatPercent: $0.bodyFatPercent, samples: [])
+                SavedRecord(date: $0.date, weightKg: $0.weightKg, bmi: $0.bmi, bodyFatPercent: $0.bodyFatPercent)
             }
             records = (fromHealth + fromShortcut).sorted { $0.date > $1.date }
         }
@@ -214,7 +226,7 @@ final class ScaleController: NSObject, ObservableObject {
         let (weight, bmi, fat) = metrics(measurement)
         guard !usesShortcut else {
             pendingRecord = record(measurement)
-            lastSavedText = String(format: "待写入：%.2f kg / BMI %.1f / 体脂 %.1f%%", weight, bmi, fat)
+            lastSavedText = Self.summary("待写入", weight, bmi, fat)
             status = "等待通过快捷指令写入"
             disconnectFromScale()
             return
@@ -223,13 +235,13 @@ final class ScaleController: NSObject, ObservableObject {
             do {
                 try await health.save(weightKg: weight, bmi: bmi, bodyFatPercent: fat)
                 loadRecords()
-                lastSavedText = String(format: "已写入：%.2f kg / BMI %.1f / 体脂 %.1f%%", weight, bmi, fat)
+                lastSavedText = Self.summary("已写入", weight, bmi, fat)
                 status = "写入完成，断开连接"
                 disconnectFromScale()
             } catch {
                 pendingRecord = record(measurement)
                 usesShortcut = true
-                lastSavedText = String(format: "待写入：%.2f kg / BMI %.1f / 体脂 %.1f%%", weight, bmi, fat)
+                lastSavedText = Self.summary("待写入", weight, bmi, fat)
                 status = "Health 写入失败，改用快捷指令"
                 disconnectFromScale()
             }
@@ -241,27 +253,16 @@ final class ScaleController: NSObject, ObservableObject {
         return LocalRecord(date: date, weightKg: m.weight, bmi: m.bmi, bodyFatPercent: m.fat)
     }
 
-    private func metrics(_ measurement: ScaleMeasurement) -> (weight: Double, bmi: Double, fat: Double) {
+    /// 没量到阻抗就不给体脂率，宁可缺失也不写一个只靠身高体重猜出来的值。
+    private func metrics(_ measurement: ScaleMeasurement) -> (weight: Double, bmi: Double, fat: Double?) {
         let weight = (measurement.weightKg * 100).rounded() / 100
         return (
             weight,
             BodyMetrics.bmi(weightKg: weight, heightCm: heightCm),
-            BodyMetrics.bodyFatPercent(weightKg: weight, heightCm: heightCm, age: age, sex: sex, calibration: calibration)
+            measurement.impedance == nil
+                ? nil
+                : BodyMetrics.bodyFatPercent(weightKg: weight, heightCm: heightCm, age: age, sex: sex, calibration: calibration)
         )
-    }
-
-    func deleteRecords(at offsets: IndexSet) {
-        let targets = offsets.map { records[$0] }
-        records.remove(atOffsets: offsets)
-        // 没有 sample 的就是快捷指令写的本地记录，按时间戳删。
-        let localDates = Set(targets.filter { $0.samples.isEmpty }.map(\.date))
-        localRecords.removeAll { localDates.contains($0.date) }
-        Task {
-            for record in targets where !record.samples.isEmpty {
-                try? await health.delete(record.samples)
-            }
-            loadRecords()
-        }
     }
 
     private func disconnectFromScale() {

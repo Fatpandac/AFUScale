@@ -6,8 +6,8 @@ struct SavedRecord: Identifiable {
     let date: Date
     let weightKg: Double
     let bmi: Double
-    let bodyFatPercent: Double
-    let samples: [HKQuantitySample]
+    /// 秤没测到阻抗时为 nil，此时不写体脂率。
+    let bodyFatPercent: Double?
 }
 
 final class HealthWriter {
@@ -33,9 +33,9 @@ final class HealthWriter {
     }
 
     @discardableResult
-    func save(weightKg: Double, bmi: Double, bodyFatPercent: Double, date: Date = Date()) async throws -> [HKQuantitySample] {
+    func save(weightKg: Double, bmi: Double, bodyFatPercent: Double?, date: Date = Date()) async throws -> [HKQuantitySample] {
         guard isAvailable else { return [] }
-        let samples: [HKQuantitySample] = [
+        var samples: [HKQuantitySample] = [
             HKQuantitySample(
                 type: bodyMass,
                 quantity: HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: weightKg),
@@ -47,21 +47,21 @@ final class HealthWriter {
                 quantity: HKQuantity(unit: .count(), doubleValue: bmi),
                 start: date,
                 end: date
-            ),
-            HKQuantitySample(
-                type: bodyFat,
-                quantity: HKQuantity(unit: .percent(), doubleValue: bodyFatPercent / 100),
-                start: date,
-                end: date
             )
         ]
+        // 没有阻抗就没有可信的体脂率，不写这条样本。
+        if let bodyFatPercent {
+            samples.append(
+                HKQuantitySample(
+                    type: bodyFat,
+                    quantity: HKQuantity(unit: .percent(), doubleValue: bodyFatPercent / 100),
+                    start: date,
+                    end: date
+                )
+            )
+        }
         try await store.save(samples)
         return samples
-    }
-
-    func delete(_ samples: [HKQuantitySample]) async throws {
-        guard isAvailable, !samples.isEmpty else { return }
-        try await store.delete(samples)
     }
 
     /// 从 HealthKit 读回本 App 写入的历史记录（持久化以 Health 为准）。
@@ -86,8 +86,7 @@ final class HealthWriter {
                 date: mass.startDate,
                 weightKg: mass.quantity.doubleValue(for: .gramUnit(with: .kilo)),
                 bmi: bmiSample?.quantity.doubleValue(for: .count()) ?? 0,
-                bodyFatPercent: (fatSample?.quantity.doubleValue(for: .percent()) ?? 0) * 100,
-                samples: [mass] + [bmiSample, fatSample].compactMap { $0 }
+                bodyFatPercent: fatSample.map { $0.quantity.doubleValue(for: .percent()) * 100 }
             )
         }
         .sorted { $0.date > $1.date }

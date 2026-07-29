@@ -257,30 +257,7 @@ struct ContentView: View {
                     .padding(.vertical, 32)
             } else {
                 ForEach(Array(scale.records.enumerated()), id: \.element.id) { index, record in
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(String(format: "%.2f kg", record.weightKg))
-                                .font(.system(size: 17, weight: .semibold))
-                            Text(String(format: "BMI %.1f  ·  体脂 %.1f%%", record.bmi, record.bodyFatPercent))
-                                .font(.system(size: 14))
-                                .foregroundStyle(Palette.muted)
-                            Text(record.date.formatted(date: .abbreviated, time: .shortened))
-                                .font(.system(size: 12))
-                                .foregroundStyle(Palette.muted)
-                        }
-
-                        Spacer()
-
-                        Button(role: .destructive) {
-                            scale.deleteRecords(at: IndexSet(integer: index))
-                        } label: {
-                            Image(systemName: "trash")
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("删除这条记录")
-                    }
-                    .padding(.vertical, 12)
+                    recordRow(record)
 
                     if index < scale.records.count - 1 {
                         Divider()
@@ -290,6 +267,47 @@ struct ContentView: View {
         }
         .padding(24)
         .background(.white)
+    }
+
+    private func recordRow(_ record: SavedRecord) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(String(format: "%.2f", record.weightKg))
+                        .font(.system(size: 28, weight: .semibold))
+                        .tracking(-0.26)
+                    Text("kg")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
+                }
+
+                HStack(spacing: 8) {
+                    chip("BMI " + String(format: "%.1f", record.bmi))
+                    chip("体脂 " + (record.bodyFatPercent.map { String(format: "%.1f%%", $0) } ?? "—"))
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(record.date.formatted(.dateTime.month(.abbreviated).day()))
+                    .font(.system(size: 14, weight: .semibold))
+                Text(record.date.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 12))
+            }
+            .foregroundStyle(Palette.muted)
+        }
+        .padding(.vertical, 16)
+    }
+
+    private func chip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Palette.muted)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Palette.parchment)
+            .clipShape(Capsule())
     }
 
     @ViewBuilder

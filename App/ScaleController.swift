@@ -9,6 +9,56 @@ final class ScaleController: NSObject, ObservableObject {
     @Published var lastSavedText = "尚未写入"
     @Published var needsHealthAuthorization = false
     @Published var records: [SavedRecord] = []
+    /// 改走快捷指令写入：用户主动选择，或免费证书剥掉 HealthKit entitlement 导致授权/写入失败。
+    @Published var usesShortcut = UserDefaults.standard.bool(forKey: "AFUScale.usesShortcut") {
+        didSet { UserDefaults.standard.set(usesShortcut, forKey: "AFUScale.usesShortcut") }
+    }
+
+    // ponytail: 快捷指令名写死，用户按这个名字建捷径即可；要改名再加设置项。
+    static let shortcutName = "AFUScale 写入健康"
+    /// 快捷指令跑完通过 x-callback-url 跳回本 App 用的 scheme（同步登记在 Info.plist）。
+    static let callbackScheme = "afuscale"
+
+    /// 交给「快捷指令」的文本输入为 JSON，捷径里用「从输入获取词典」取值。
+    /// fat 是百分数本身（18.70 即 18.70%），快捷指令里直接填入，不要再乘除 100。
+    static func shortcutURL(name: String = shortcutName, weight: Double, bmi: Double, fat: Double) -> URL? {
+        var components = URLComponents(string: "shortcuts://x-callback-url/run-shortcut")
+        components?.queryItems = [
+            URLQueryItem(name: "name", value: name),
+            URLQueryItem(name: "input", value: "text"),
+            URLQueryItem(name: "text", value: String(format: "{\"weight\":%.2f,\"bmi\":%.2f,\"fat\":%.2f}", weight, bmi, fat)),
+            URLQueryItem(name: "x-success", value: "\(callbackScheme)://saved"),
+            URLQueryItem(name: "x-error", value: "\(callbackScheme)://failed"),
+            URLQueryItem(name: "x-cancel", value: "\(callbackScheme)://cancelled")
+        ]
+        return components?.url
+    }
+
+    /// 处理快捷指令跑完后回跳的 x-callback-url。
+    func handleCallback(_ url: URL) {
+        guard url.scheme == Self.callbackScheme else { return }
+        switch url.host {
+        case "saved":
+            if let latest {
+                let m = metrics(latest)
+                lastSavedText = String(format: "已写入：%.2f kg / BMI %.1f / 体脂 %.1f%%", m.weight, m.bmi, m.fat)
+            }
+            status = "快捷指令写入完成"
+        case "cancelled":
+            status = "快捷指令已取消"
+        default:
+            let message = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "errorMessage" }?.value
+            status = "快捷指令写入失败：\(message ?? "未知错误")"
+        }
+    }
+
+    /// 当前测量值对应的快捷指令链接；没测过则为 nil。
+    var shortcutURL: URL? {
+        guard let latest else { return nil }
+        let m = metrics(latest)
+        return Self.shortcutURL(weight: m.weight, bmi: m.bmi, fat: m.fat)
+    }
 
     private let health = HealthWriter()
     private var central: CBCentralManager!
@@ -42,6 +92,7 @@ final class ScaleController: NSObject, ObservableObject {
     func requestHealthAuthorization() {
         if health.isWriteAuthorized {
             needsHealthAuthorization = false
+            usesShortcut = false
             status = "Health 已授权，等待秤"
             loadRecords()
             startScanningIfReady()
@@ -51,10 +102,12 @@ final class ScaleController: NSObject, ObservableObject {
             do {
                 try await health.requestAuthorization()
                 needsHealthAuthorization = !health.isWriteAuthorized
+                usesShortcut = false
                 status = health.isWriteAuthorized ? "Health 已授权，等待秤" : "Health 未授权写入"
                 loadRecords()
                 startScanningIfReady()
             } catch {
+                usesShortcut = true
                 status = "Health 授权失败：\(error.localizedDescription)"
             }
         }
@@ -96,9 +149,13 @@ final class ScaleController: NSObject, ObservableObject {
         }
         lastSavedAt = Date()
 
-        let weight = (measurement.weightKg * 100).rounded() / 100
-        let bmi = BodyMetrics.bmi(weightKg: weight, heightCm: heightCm)
-        let fat = BodyMetrics.bodyFatPercent(weightKg: weight, heightCm: heightCm, age: age, sex: sex, calibration: calibration)
+        let (weight, bmi, fat) = metrics(measurement)
+        guard !usesShortcut else {
+            lastSavedText = String(format: "待写入：%.2f kg / BMI %.1f / 体脂 %.1f%%", weight, bmi, fat)
+            status = "等待通过快捷指令写入"
+            disconnectFromScale()
+            return
+        }
         Task {
             do {
                 try await health.save(weightKg: weight, bmi: bmi, bodyFatPercent: fat)
@@ -107,9 +164,21 @@ final class ScaleController: NSObject, ObservableObject {
                 status = "写入完成，断开连接"
                 disconnectFromScale()
             } catch {
+                usesShortcut = true
+                lastSavedText = String(format: "待写入：%.2f kg / BMI %.1f / 体脂 %.1f%%", weight, bmi, fat)
                 status = "写入 Health 失败：\(error.localizedDescription)"
+                disconnectFromScale()
             }
         }
+    }
+
+    private func metrics(_ measurement: ScaleMeasurement) -> (weight: Double, bmi: Double, fat: Double) {
+        let weight = (measurement.weightKg * 100).rounded() / 100
+        return (
+            weight,
+            BodyMetrics.bmi(weightKg: weight, heightCm: heightCm),
+            BodyMetrics.bodyFatPercent(weightKg: weight, heightCm: heightCm, age: age, sex: sex, calibration: calibration)
+        )
     }
 
     func deleteRecords(at offsets: IndexSet) {

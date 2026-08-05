@@ -38,7 +38,7 @@ AFUScale 是一款适用于 **AFU-WL-TZ-A1** 体脂秤的 iOS 应用。它通过
 
 免费 Apple ID 无法签发包含 HealthKit 权限的描述文件，Sideloadly 重签时会剥掉 `com.apple.developer.healthkit`，应用因此**无法直接写入 Apple 健康**（这是系统限制，不是应用的 Bug）。此时应用会自动锁定到“快捷指令”写入方式，由快捷指令代为写入。
 
-1. 在 iPhone 上打开并添加此快捷指令：<https://www.icloud.com/shortcuts/a07b76881c0b4e8ab1cbeae3b0e33f1e>
+1. 在 iPhone 上打开并添加此快捷指令：<https://www.icloud.com/shortcuts/ed61e82b3f604c68a33d512e7748db7d>
 2. 确认快捷指令名称为 **AFUScale 写入健康**。应用按此名称调用，改名会导致调用失败。
 3. 在**设置 → 健康 → 数据访问与设备 → 快捷指令**中，允许写入体重、体质指数和体脂率。
 4. 在应用的“写入方式”中选择“快捷指令”（没有 HealthKit 权限时会自动锁定在这一项）。
